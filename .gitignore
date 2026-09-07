@@ -1,0 +1,7 @@
+*.sh
+scripts/
+containers/*.o
+numa/*.o
+parallel_executions/*.o
+serial_executions/*.o
+ij
