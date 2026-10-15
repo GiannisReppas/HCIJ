@@ -3,10 +3,6 @@
 #include "../../containers/bucket_index.hpp"
 #include "../../containers/FS_map.hpp"
 
-// sorting conditions
-bool CompareByStart(const Record& a, const Record& b);
-bool CompareByLoad(const FSGrouped& a, const FSGrouped& b);
-
 // function to estimate FSs extent
 uint64_t FS_estimation(Relation& R, Relation& S);
 
@@ -697,8 +693,8 @@ uint64_t parallel_FSs(Relation& R, Relation&S, int mode, int computations, int m
 	std::span<Record> tempS( S.record_list, S.numRecords);
 	oneapi::tbb::task_arena arenaA(numThreads);
 	oneapi::tbb::task_arena arenaB(numThreads);
-	arenaA.execute([&]{ oneapi::tbb::parallel_sort( tempR.begin(), tempR.end() , CompareByStart); });
-	arenaA.execute([&]{ oneapi::tbb::parallel_sort( tempS.begin(), tempS.end() , CompareByStart); });
+	arenaA.execute([&]{ oneapi::tbb::parallel_sort( tempR.begin(), tempR.end() , CompareByStart{} ); });
+	arenaA.execute([&]{ oneapi::tbb::parallel_sort( tempS.begin(), tempS.end() , CompareByStart{} ); });
 	double timeSorting = tim.stop();
 	printf("Sorting:                    %lf secs\n", timeSorting);
 

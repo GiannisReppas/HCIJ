@@ -4,25 +4,6 @@
 int get_closest_node(int core_id);
 int get_most_distant_node(int core_id);
 
-/*
-normally its just return a.start < b.start
-but we wanted to preserve the order of equal elements for for testing purposes
-*/
-bool CompareByStart(const Record& a, const Record& b)
-{
-	if (a.start < b.start)
-		return true;
-	else if (a.start == b.start)
-		return a.end < b.end;
-
-	return false;
-}
-
-bool CompareByEnd(const Record& a, const Record& b)
-{
-	return a.end < b.end;
-}
-
 /**************************************************************************************************/
 
 Record::Record()

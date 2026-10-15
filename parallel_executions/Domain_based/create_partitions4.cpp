@@ -2,9 +2,6 @@
 #include "../../containers/relation.hpp"
 #include "../../containers/bucket_index.hpp"
 
-bool CompareByStart(const Record& a, const Record& b);
-bool CompareByEnd(const Record& a, const Record& b);
-
 uint64_t FS_estimation(Relation& R, Relation& S);
 
 /*
@@ -968,18 +965,18 @@ void* sort_partitions4(void* args)
 	oneapi::tbb::task_arena arenaB(1);
 	oneapi::tbb::task_arena arenaC(1);
 	oneapi::tbb::task_arena arenaD(1);
-	arenaE.execute([&]{ oneapi::tbb::parallel_sort( &sps->seR->record_list[0], &sps->seR->record_list[0] + sps->seR->numRecords, CompareByStart); });
-	arenaF.execute([&]{ oneapi::tbb::parallel_sort( &sps->seS->record_list[0], &sps->seS->record_list[0] + sps->seS->numRecords, CompareByStart); });
-	arenaA.execute([&]{ oneapi::tbb::parallel_sort( &sps->sR->record_list[0], &sps->sR->record_list[0] + sps->sR->numRecords, CompareByStart); });
-	arenaB.execute([&]{ oneapi::tbb::parallel_sort( &sps->sS->record_list[0], &sps->sS->record_list[0] + sps->sS->numRecords, CompareByStart); });
-	arenaC.execute([&]{ oneapi::tbb::parallel_sort( &sps->eR->record_list[0], &sps->eR->record_list[0] + sps->eR->numRecords, CompareByEnd); });
-	arenaD.execute([&]{ oneapi::tbb::parallel_sort( &sps->eS->record_list[0], &sps->eS->record_list[0] + sps->eS->numRecords, CompareByEnd); });
-//	std::sort( &sps->seR->record_list[0], &sps->seR->record_list[0] + sps->seR->numRecords, CompareByStart);
-//	std::sort( &sps->seS->record_list[0], &sps->seS->record_list[0] + sps->seS->numRecords, CompareByStart);
-//	std::sort( &sps->sR->record_list[0], &sps->sR->record_list[0] + sps->sR->numRecords, CompareByStart);
-//	std::sort( &sps->sS->record_list[0], &sps->sS->record_list[0] + sps->sS->numRecords, CompareByStart);
-//	std::sort( &sps->eR->record_list[0], &sps->eR->record_list[0] + sps->eR->numRecords, CompareByEnd);
-//	std::sort( &sps->eS->record_list[0], &sps->eS->record_list[0] + sps->eS->numRecords, CompareByEnd);
+	arenaE.execute([&]{ oneapi::tbb::parallel_sort( &sps->seR->record_list[0], &sps->seR->record_list[0] + sps->seR->numRecords, CompareByStart{} ); });
+	arenaF.execute([&]{ oneapi::tbb::parallel_sort( &sps->seS->record_list[0], &sps->seS->record_list[0] + sps->seS->numRecords, CompareByStart{} ); });
+	arenaA.execute([&]{ oneapi::tbb::parallel_sort( &sps->sR->record_list[0], &sps->sR->record_list[0] + sps->sR->numRecords, CompareByStart{} ); });
+	arenaB.execute([&]{ oneapi::tbb::parallel_sort( &sps->sS->record_list[0], &sps->sS->record_list[0] + sps->sS->numRecords, CompareByStart{} ); });
+	arenaC.execute([&]{ oneapi::tbb::parallel_sort( &sps->eR->record_list[0], &sps->eR->record_list[0] + sps->eR->numRecords, CompareByEnd{} ); });
+	arenaD.execute([&]{ oneapi::tbb::parallel_sort( &sps->eS->record_list[0], &sps->eS->record_list[0] + sps->eS->numRecords, CompareByEnd{} ); });
+//	std::sort( &sps->seR->record_list[0], &sps->seR->record_list[0] + sps->seR->numRecords, CompareByStart{} );
+//	std::sort( &sps->seS->record_list[0], &sps->seS->record_list[0] + sps->seS->numRecords, CompareByStart{} );
+//	std::sort( &sps->sR->record_list[0], &sps->sR->record_list[0] + sps->sR->numRecords, CompareByStart{} );
+//	std::sort( &sps->sS->record_list[0], &sps->sS->record_list[0] + sps->sS->numRecords, CompareByStart{} );
+//	std::sort( &sps->eR->record_list[0], &sps->eR->record_list[0] + sps->eR->numRecords, CompareByEnd{} );
+//	std::sort( &sps->eS->record_list[0], &sps->eS->record_list[0] + sps->eS->numRecords, CompareByEnd{} );
 
 	return NULL;
 }

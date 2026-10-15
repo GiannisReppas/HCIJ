@@ -2,9 +2,6 @@
 #include "../../containers/relation.hpp"
 #include "../../containers/bucket_index.hpp"
 
-bool CompareByStart(const Record& a, const Record& b);
-bool CompareByEnd(const Record& a, const Record& b);
-
 uint64_t FS_estimation(Relation& R, Relation& S);
 
 /*
@@ -135,14 +132,14 @@ inline void AdaptivePartitioning3(uint32_t* shistR, uint32_t* shistS, uint64_t* 
 		sp = Q[idx].first;
 		idx--;
 		checked++;
-		
+
 		// Move load to the previous partition.
 		if (sp == numPartitions-1 || sp != 0 && curr[sp-1] < curr[sp+1])
 		{
 			auto gid = sbboundaries[sp];
 			auto newSP = (curr_sR[sp]-shistR[gid])*(curr_sS[sp]-shistS[gid]);
 			auto newSP1 = (curr_sR[sp-1]+shistR[gid])*(curr_sS[sp-1]+shistS[gid]);
-			
+
 			while ((gid != numGranules-1) && (newSP > newSP1))
 			{
 				curr_sR[sp] -= shistR[gid];
@@ -153,7 +150,7 @@ inline void AdaptivePartitioning3(uint32_t* shistR, uint32_t* shistS, uint64_t* 
 				curr[sp-1] = newSP1;
 				boundaries[sp-1] += granuleExtent;
 				sbboundaries[sp]++;
-				
+
 				gid++;
 				newSP = (curr_sR[sp]-shistR[gid])*(curr_sS[sp]-shistS[gid]);
 				newSP1 = (curr_sR[sp-1]+shistR[gid])*(curr_sS[sp-1]+shistS[gid]);
@@ -166,7 +163,7 @@ inline void AdaptivePartitioning3(uint32_t* shistR, uint32_t* shistS, uint64_t* 
 			auto gid = sbboundaries[sp+1]-1;
 			auto newSP = (curr_sR[sp]-shistR[gid])*(curr_sS[sp]-shistS[gid]);
 			auto newSP1 = (curr_sR[sp+1]+shistR[gid])*(curr_sS[sp+1]+shistS[gid]);
-			
+
 			while ((gid != -1) && (newSP > newSP1))
 			{
 				curr_sR[sp] -= shistR[gid];
@@ -177,7 +174,7 @@ inline void AdaptivePartitioning3(uint32_t* shistR, uint32_t* shistS, uint64_t* 
 				curr[sp+1] = newSP1;
 				boundaries[sp] -= granuleExtent;
 				sbboundaries[sp+1]--;
-				
+
 				gid--;
 				newSP = (curr_sR[sp]-shistR[gid])*(curr_sS[sp]-shistS[gid]);
 				newSP1 = (curr_sR[sp+1]+shistR[gid])*(curr_sS[sp+1]+shistS[gid]);
@@ -804,14 +801,14 @@ void* sort_partitions3(void* args)
 	oneapi::tbb::task_arena arenaB(1);
 	oneapi::tbb::task_arena arenaC(1);
 	oneapi::tbb::task_arena arenaD(1);
-	arenaA.execute([&]{ oneapi::tbb::parallel_sort( &sps->sR->record_list[0], &sps->sR->record_list[0] + sps->sR->numRecords, CompareByStart); });
-	arenaB.execute([&]{ oneapi::tbb::parallel_sort( &sps->sS->record_list[0], &sps->sS->record_list[0] + sps->sS->numRecords, CompareByStart); });
-	arenaC.execute([&]{ oneapi::tbb::parallel_sort( &sps->eR->record_list[0], &sps->eR->record_list[0] + sps->eR->numRecords, CompareByEnd); });
-	arenaD.execute([&]{ oneapi::tbb::parallel_sort( &sps->eS->record_list[0], &sps->eS->record_list[0] + sps->eS->numRecords, CompareByEnd); });
-//	std::sort( &sps->sR->record_list[0], &sps->sR->record_list[0] + sps->sR->numRecords, CompareByStart);
-//	std::sort( &sps->sS->record_list[0], &sps->sS->record_list[0] + sps->sS->numRecords, CompareByStart);
-//	std::sort( &sps->eR->record_list[0], &sps->eR->record_list[0] + sps->eR->numRecords, CompareByEnd);
-//	std::sort( &sps->eS->record_list[0], &sps->eS->record_list[0] + sps->eS->numRecords, CompareByEnd);
+	arenaA.execute([&]{ oneapi::tbb::parallel_sort( &sps->sR->record_list[0], &sps->sR->record_list[0] + sps->sR->numRecords, CompareByStart{} ); });
+	arenaB.execute([&]{ oneapi::tbb::parallel_sort( &sps->sS->record_list[0], &sps->sS->record_list[0] + sps->sS->numRecords, CompareByStart{} ); });
+	arenaC.execute([&]{ oneapi::tbb::parallel_sort( &sps->eR->record_list[0], &sps->eR->record_list[0] + sps->eR->numRecords, CompareByEnd{} ); });
+	arenaD.execute([&]{ oneapi::tbb::parallel_sort( &sps->eS->record_list[0], &sps->eS->record_list[0] + sps->eS->numRecords, CompareByEnd{} ); });
+//	std::sort( &sps->sR->record_list[0], &sps->sR->record_list[0] + sps->sR->numRecords, CompareByStart{} );
+//	std::sort( &sps->sS->record_list[0], &sps->sS->record_list[0] + sps->sS->numRecords, CompareByStart{} );
+//	std::sort( &sps->eR->record_list[0], &sps->eR->record_list[0] + sps->eR->numRecords, CompareByEnd{} );
+//	std::sort( &sps->eS->record_list[0], &sps->eS->record_list[0] + sps->eS->numRecords, CompareByEnd{} );
 
 	return NULL;
 }

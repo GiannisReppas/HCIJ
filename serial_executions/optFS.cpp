@@ -2,9 +2,6 @@
 #include "../containers/relation.hpp"
 #include "../containers/bucket_index.hpp"
 
-// sorting condition
-bool CompareByStart(const Record& a, const Record& b);
-
 // function to estimate FSs extent
 uint64_t FS_estimation(Relation& R, Relation& S);
 
@@ -32,10 +29,10 @@ uint64_t optFS(Relation& R, Relation&S, int mode, int computations, int max_grou
 	tim.start();
 	oneapi::tbb::task_arena arenaA(1);
 	oneapi::tbb::task_arena arenaB(1);
-	arenaA.execute([&]{ oneapi::tbb::parallel_sort( &R.record_list[0], &R.record_list[0] + R.numRecords, CompareByStart); });
-	arenaB.execute([&]{ oneapi::tbb::parallel_sort( &S.record_list[0], &S.record_list[0] + S.numRecords, CompareByStart); });
-//	std::sort( &R.record_list[0], &R.record_list[0] + R.numRecords, CompareByStart);
-//	std::sort( &S.record_list[0], &S.record_list[0] + S.numRecords, CompareByStart);
+	arenaA.execute([&]{ oneapi::tbb::parallel_sort( &R.record_list[0], &R.record_list[0] + R.numRecords, CompareByStart{} ); });
+	arenaB.execute([&]{ oneapi::tbb::parallel_sort( &S.record_list[0], &S.record_list[0] + S.numRecords, CompareByStart{} ); });
+//	std::sort( &R.record_list[0], &R.record_list[0] + R.numRecords, CompareByStart{} );
+//	std::sort( &S.record_list[0], &S.record_list[0] + S.numRecords, CompareByStart{} );
 	double timeSorting = tim.stop();
 	printf("Sorting:                    %lf secs\n", timeSorting);
 
