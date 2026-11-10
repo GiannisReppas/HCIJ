@@ -22,6 +22,8 @@ void bgudFS_intermediate_discovery_count(Relation &R, Relation &S, int max_group
 void bgudFS_intermediate_discovery_set  (Relation &R, Relation &S, int max_group_size, BucketIndex& BIR, BucketIndex& BIS, FSMapGrouped* fsmg_intermediate, Timestamp** boundariesR, Timestamp** boundariesS, uint32_t numThreads, uint32_t* points_to_write1, uint32_t* points_to_write2);
 void bgudFS_intermediate_discovery_split_count(FSMapGrouped* fsmg_intermediate, FSMapGrouped* fsmg, uint32_t numThreads);
 void bgudFS_intermediate_discovery_split_set  (FSMapGrouped* fsmg_intermediate, FSMapGrouped* fsmg, uint32_t numThreads, Relation& R, Relation& S, Relation* R_copies, Relation* S_copies, int allocationStrategy, int* thread_core_map);
+void bgudFS_alternative_discovery_count(Relation &R, Relation &S, int max_group_size, FSMapGrouped* fsmg_intermediate, Timestamp** boundariesR, Timestamp** boundariesS, uint32_t numThreads, uint32_t* points_to_write1, uint32_t* points_to_write2);
+void bgudFS_alternative_discovery_set(Relation &R, Relation &S, int max_group_size, FSMapGrouped* fsmg_intermediate, Timestamp** boundariesR, Timestamp** boundariesS, uint32_t numThreads, uint32_t* points_to_write1, uint32_t* points_to_write2);
 
 // direct execution functions
 uint64_t udFS_internalLoop_wc       ( Timestamp* curr_end, Timestamp* firstFS, Timestamp* lastFS);
@@ -777,6 +779,7 @@ uint64_t parallel_FSs(Relation& R, Relation&S, int mode, int computations, int m
 		printf("Bucketing:                  %lf secs\n", bucketBuildingTime);
 	}
 
+	FSMapGrouped fsmg_intermediate[2];
 	if (FS_est >= OPT_FS_BARRIER)
 	{
 		// Assigning Forward Scans
@@ -810,6 +813,7 @@ uint64_t parallel_FSs(Relation& R, Relation&S, int mode, int computations, int m
 
 			uint32_t points_to_write1[numThreads];
 			uint32_t points_to_write2[numThreads];
+			// never entering here
 			if (FS_est < OPT_FS_BARRIER)
 			{
 				// never used, inferior to non-FSMap direct execution
@@ -822,12 +826,16 @@ uint64_t parallel_FSs(Relation& R, Relation&S, int mode, int computations, int m
 			}
 			else
 			{
-				FSMapGrouped  fsmg_intermediate[2];
+#if defined(OG_CREATION)
 				bgudFS_intermediate_discovery_count( R, S, max_group_size,           fsmg_intermediate, boundariesR, boundariesS, numThreads, points_to_write1, points_to_write2);
 				bgudFS_intermediate_discovery_set  ( R, S, max_group_size, BIR, BIS, fsmg_intermediate, boundariesR, boundariesS, numThreads, points_to_write1, points_to_write2);
 
 				bgudFS_intermediate_discovery_split_count( fsmg_intermediate, fsmg, numThreads);
 				bgudFS_intermediate_discovery_split_set  ( fsmg_intermediate, fsmg, numThreads, R, S, R_copies, S_copies, allocationStrategy, thread_core_map);
+#else
+				bgudFS_alternative_discovery_count( R, S, max_group_size, fsmg_intermediate, boundariesR, boundariesS, numThreads, points_to_write1, points_to_write2);
+				bgudFS_alternative_discovery_set  ( R, S, max_group_size, fsmg_intermediate, boundariesR, boundariesS, numThreads, points_to_write1, points_to_write2);
+#endif
 			}
 
 			// free memory used
@@ -852,63 +860,78 @@ uint64_t parallel_FSs(Relation& R, Relation&S, int mode, int computations, int m
 			tim.start();
 			result = 0;
 
-			if (FS_est < OPT_FS_BARRIER)
-			{
+#if defined(OG_CREATION)
+				if (FS_est < OPT_FS_BARRIER)
+				{
+					for (uint32_t i = 0; i < numThreads; i++)
+					{
+						spdfs[i].fsmd = &fsmd[i];
+
+						spdfs[i].thread_id = i;
+						spdfs[i].core_id = thread_core_map[i];
+
+						spdfs[i].allocationStrategy = allocationStrategy;
+
+						spdfs[i].result = &thread_results[i];
+
+						if (mode == WORKLOAD_COUNT)
+							pthread_create( &thread_id[i], NULL, detached_wc, (void*) &spdfs[i]);
+						else if (mode == XOR)
+							pthread_create( &thread_id[i], NULL, detached_xor, (void*) &spdfs[i]);
+						else if (mode == SIMD_XOR)
+							pthread_create( &thread_id[i], NULL, detached_simd_xor, (void*) &spdfs[i]);
+					}
+					for (uint32_t i = 0; i < numThreads; i++)
+					{
+						pthread_join( thread_id[i], NULL);
+					}
+				}
+				else
+				{
+					for (uint32_t i = 0; i < numThreads; i++)
+					{
+						spgfs[i].fsmg = &fsmg[i];
+
+						spgfs[i].thread_id = i;
+						spgfs[i].core_id = thread_core_map[i];
+
+						spgfs[i].allocationStrategy = allocationStrategy;
+
+						spgfs[i].result = &thread_results[i];
+
+						if (mode == WORKLOAD_COUNT)
+							pthread_create( &thread_id[i], NULL, grouped_wc, (void*) &spgfs[i]);
+						else if (mode == XOR)
+							pthread_create( &thread_id[i], NULL, grouped_xor, (void*) &spgfs[i]);
+						else if (mode == SIMD_XOR)
+							pthread_create( &thread_id[i], NULL, grouped_simd_xor, (void*) &spgfs[i]);
+							//pthread_create( &thread_id[i], NULL, grouped_rectangle_simd_xor, (void*) &spgfs[i]);
+					}
+					for (uint32_t i = 0; i < numThreads; i++)
+					{
+						pthread_join( thread_id[i], NULL);
+					}
+				}
+				// add thread results
 				for (uint32_t i = 0; i < numThreads; i++)
 				{
-					spdfs[i].fsmd = &fsmd[i];
-
-					spdfs[i].thread_id = i;
-					spdfs[i].core_id = thread_core_map[i];
-
-					spdfs[i].allocationStrategy = allocationStrategy;
-
-					spdfs[i].result = &thread_results[i];
-
-					if (mode == WORKLOAD_COUNT)
-						pthread_create( &thread_id[i], NULL, detached_wc, (void*) &spdfs[i]);
-					else if (mode == XOR)
-						pthread_create( &thread_id[i], NULL, detached_xor, (void*) &spdfs[i]);
-					else if (mode == SIMD_XOR)
-						pthread_create( &thread_id[i], NULL, detached_simd_xor, (void*) &spdfs[i]);
+					result += thread_results[i];
 				}
-				for (uint32_t i = 0; i < numThreads; i++)
+#else
+				Timestamp* lastR = R.startpoints + R.numRecords;
+				Timestamp* lastS = S.startpoints + S.numRecords;
+
+				#pragma omp parallel num_threads(numThreads) reduction(+:result)
 				{
-					pthread_join( thread_id[i], NULL);
+					#pragma omp for schedule(dynamic) nowait
+					for (uint32_t j = 0; j < fsmg_intermediate[0].numResults; j++)
+						result += fsmg_intermediate[0].compute_results_alternative_simd_xor( j, R.startpoints, R.endpoints, lastS);
+
+					#pragma omp for schedule(dynamic)
+					for (uint32_t j = 0; j < fsmg_intermediate[1].numResults; j++)
+						result += fsmg_intermediate[1].compute_results_alternative_simd_xor( j, S.startpoints, S.endpoints, lastR);
 				}
-			}
-			else
-			{
-				for (uint32_t i = 0; i < numThreads; i++)
-				{
-					spgfs[i].fsmg = &fsmg[i];
-
-					spgfs[i].thread_id = i;
-					spgfs[i].core_id = thread_core_map[i];
-
-					spgfs[i].allocationStrategy = allocationStrategy;
-
-					spgfs[i].result = &thread_results[i];
-
-					if (mode == WORKLOAD_COUNT)
-						pthread_create( &thread_id[i], NULL, grouped_wc, (void*) &spgfs[i]);
-					else if (mode == XOR)
-						pthread_create( &thread_id[i], NULL, grouped_xor, (void*) &spgfs[i]);
-					else if (mode == SIMD_XOR)
-						pthread_create( &thread_id[i], NULL, grouped_simd_xor, (void*) &spgfs[i]);
-						//pthread_create( &thread_id[i], NULL, grouped_rectangle_simd_xor, (void*) &spgfs[i]);
-				}
-				for (uint32_t i = 0; i < numThreads; i++)
-				{
-					pthread_join( thread_id[i], NULL);
-				}
-			}
-
-			// add thread results
-			for (uint32_t i = 0; i < numThreads; i++)
-			{
-				result += thread_results[i];
-			}
+#endif
 
 			joinTime = tim.stop();
 			printf("Joining:                    %lf secs\n", joinTime);

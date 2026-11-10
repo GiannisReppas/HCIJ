@@ -508,6 +508,7 @@ uint64_t FSMapGrouped::compute_results_simd_xor(uint32_t j)
 
 	return result;
 }
+
 uint64_t FSMapGrouped::compute_results_rectangle_simd_xor(uint32_t start_group, uint32_t group_count)
 {
 	uint32_t end_group = start_group + group_count;
@@ -630,6 +631,69 @@ uint64_t FSMapGrouped::compute_results_rectangle_simd_xor(uint32_t start_group, 
 	free(vecA);
 	free(active_vals);
 	free(active_ends);
+
+	return result;
+}
+
+uint64_t FSMapGrouped::compute_results_alternative_simd_xor(uint32_t j, Timestamp* outer_startpoints, Timestamp* outer_endpoints, Timestamp* lastFS)
+{
+	Timestamp** pointers_group_start = this->result_list[j].pointers_group_start;
+	Timestamp* pivot = this->result_list[j].start;
+	uint32_t group_size = this->result_list[j].group_size;
+
+	__m512i *vecA = (__m512i*) aligned_alloc( 64, sizeof(__m512i) * group_size), vecB, vecResult;
+	Timestamp helper_list[group_size][8];
+	for (uint32_t i = 0; i < group_size; i++)
+	{
+		helper_list[i][0] = *(*(pointers_group_start+i));
+		helper_list[i][1] = *(*(pointers_group_start+i));
+		helper_list[i][2] = *(*(pointers_group_start+i));
+		helper_list[i][3] = *(*(pointers_group_start+i));
+		helper_list[i][4] = *(*(pointers_group_start+i));
+		helper_list[i][5] = *(*(pointers_group_start+i));
+		helper_list[i][6] = *(*(pointers_group_start+i));
+		helper_list[i][7] = *(*(pointers_group_start+i));
+		vecA[i] = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(helper_list[i]));
+	}
+	uint64_t result_list[8] = {0,0,0,0,0,0,0,0};
+	vecResult = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(result_list));
+
+	uint32_t group_index = 0;
+	uint64_t result = 0;
+	uint32_t bufferSize;
+	Timestamp curr_end;
+	Timestamp **lastG_start = pointers_group_start + group_size;
+	for (Timestamp **curr_start = pointers_group_start; curr_start != lastG_start; curr_start++, group_index++)
+	{
+		bufferSize = lastG_start - curr_start;
+
+		// end is not stored: read the end value of the current group tuple
+		curr_end = *(outer_endpoints + (*curr_start - outer_startpoints));
+		while ((lastFS-pivot >= 32) && (*(pivot+31) < curr_end))
+		{
+			for (uint32_t i = 0; i < bufferSize; i++)
+			{
+				simd_xor_unroll(vecResult, vecB, pivot, vecA, group_index, i);
+			}
+
+			pivot += 32;
+		}
+
+		while ((pivot < lastFS) && (*pivot < curr_end))
+		{
+			for (uint32_t i = 0; i < bufferSize; i++)
+			{
+				result += *(*(curr_start+i)) ^ *(pivot+0);
+			}
+
+			pivot++;
+		}
+	}
+
+	_mm512_storeu_si512(reinterpret_cast<__m512i*>(result_list), vecResult);
+	result += result_list[0] + result_list[1] + result_list[2] + result_list[3] + result_list[4] + result_list[5] + result_list[6] + result_list[7];
+
+	free(vecA);
 
 	return result;
 }

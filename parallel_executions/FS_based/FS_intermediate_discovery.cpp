@@ -4,8 +4,8 @@
 #include "../../containers/FS_map.hpp"
 
 // internal loops defined at the end of file
-void       udFS_intermediate_discovery_set_internalLoop  ( Timestamp* curr_start, Timestamp* curr_end, Timestamp* firstFS, Timestamp* lastFS, FSMapDetached* fsmd_intermediate, uint32_t& points_to_write);
-void     bgudFS_intermediate_discovery_set_internalLoop  ( Timestamp** pointers_group_start, Timestamp** pointers_group_end, uint32_t group_size, Timestamp* firstFS, Timestamp* lastFS, BucketIndex& BI, Timestamp minStart, FSMapGrouped* fsmg_intermediate, uint32_t& points_to_write);
+void	   udFS_intermediate_discovery_set_internalLoop  ( Timestamp* curr_start, Timestamp* curr_end, Timestamp* firstFS, Timestamp* lastFS, FSMapDetached* fsmd_intermediate, uint32_t& points_to_write);
+void	 bgudFS_intermediate_discovery_set_internalLoop  ( Timestamp** pointers_group_start, Timestamp** pointers_group_end, uint32_t group_size, Timestamp* firstFS, Timestamp* lastFS, BucketIndex& BI, Timestamp minStart, FSMapGrouped* fsmg_intermediate, uint32_t& points_to_write);
 
 // sorting condition for grouping optimization
 static bool CompareByEndPointersT( Timestamp*& a, Timestamp*& b);
@@ -542,6 +542,230 @@ void bgudFS_intermediate_discovery_set(Relation &R, Relation &S, int max_group_s
 	}
 }
 
+void* bgudFS_alternative_discovery_count_thread(void* args)
+{
+	StructForParallelDiscoveryCount* spdc = (StructForParallelDiscoveryCount*) args;
+
+	uint32_t result1 = 0;
+	uint32_t result2 = 0;
+	uint32_t group_size = 0;
+
+	while ((spdc->r_start < spdc->lastR) && (spdc->s_start < spdc->lastS))
+	{
+		if (*(spdc->r_start) < *(spdc->s_start))
+		{
+			while ((spdc->r_start < spdc->lastR) && (*(spdc->r_start) < *(spdc->s_start)) && (group_size <= spdc->max_group_size))
+			{
+				group_size++;
+				(spdc->r_start)++;
+			}
+			result1++;
+			group_size = 0;
+		}
+		else
+		{
+			while ((spdc->s_start < spdc->lastS) && (*(spdc->r_start) >= *(spdc->s_start)) && (group_size <= spdc->max_group_size))
+			{
+				group_size++;
+				(spdc->s_start)++;
+			}
+			result2++;
+			group_size = 0;
+		}
+	}
+
+	if ((spdc->lastS != spdc->total_lastS) && (spdc->lastR != spdc->total_lastR))
+	{
+		while (spdc->r_start < spdc->lastR)
+		{
+			while ((spdc->r_start < spdc->lastR) && (group_size <= spdc->max_group_size))
+			{
+				group_size++;
+				(spdc->r_start)++;
+			}
+			result1++;
+			group_size = 0;
+		}
+		while (spdc->s_start < spdc->lastS)
+		{
+			while ((spdc->s_start < spdc->lastS) && (group_size <= spdc->max_group_size))
+			{
+				group_size++;
+				(spdc->s_start)++;
+			}
+			result2++;
+			group_size = 0;
+		}
+	}
+
+	*(spdc->points_to_write1) = result1;
+	*(spdc->points_to_write2) = result2;
+
+	return NULL;
+}
+
+void bgudFS_alternative_discovery_count(Relation &R, Relation &S, int max_group_size, FSMapGrouped* fsmg_intermediate, Timestamp** boundariesR, Timestamp** boundariesS, uint32_t numThreads, uint32_t* points_to_write1, uint32_t* points_to_write2)
+{
+	StructForParallelDiscoveryCount spdc[numThreads];
+	pthread_t thread_id[numThreads];
+
+	for (uint32_t i = 0; i < numThreads; i++)
+	{
+		spdc[i].r_start = boundariesR[i] + 1;
+		spdc[i].s_start = boundariesS[i] + 1;
+		spdc[i].lastR   = boundariesR[i+1] + 1;
+		spdc[i].lastS   = boundariesS[i+1] + 1;
+		spdc[i].total_lastR = boundariesR[numThreads] + 1;
+		spdc[i].total_lastS = boundariesS[numThreads] + 1;
+		spdc[i].max_group_size = max_group_size;
+
+		spdc[i].thread_id = i;
+		spdc[i].points_to_write1 = &points_to_write1[i];
+		spdc[i].points_to_write2 = &points_to_write2[i];
+
+		pthread_create( &thread_id[i], NULL, bgudFS_alternative_discovery_count_thread, (void*) &spdc[i]);
+	}
+	for (uint32_t i = 0; i < numThreads; i++)
+	{
+		pthread_join( thread_id[i], NULL);
+	}
+
+	// prefix sums: points_to_write[i] becomes the index of the first FS map entry of thread i
+	uint32_t total_result1 = 0, total_result2 = 0, old_result;
+	for (uint32_t i = 0; i < numThreads; i++)
+	{
+		old_result = total_result1;
+		total_result1 += points_to_write1[i];
+		points_to_write1[i] = old_result;
+
+		old_result = total_result2;
+		total_result2 += points_to_write2[i];
+		points_to_write2[i] = old_result;
+	}
+
+	fsmg_intermediate[0].result_list = (total_result1 != 0) ? (FSGrouped*) malloc( total_result1 * sizeof(FSGrouped) ) : NULL;
+	fsmg_intermediate[0].numResults  = total_result1;
+
+	fsmg_intermediate[1].result_list = (total_result2 != 0) ? (FSGrouped*) malloc( total_result2 * sizeof(FSGrouped) ) : NULL;
+	fsmg_intermediate[1].numResults  = total_result2;
+}
+
+// writes one FS map entry: the group sorted by end point, its start, and end = NULL
+static inline void bgudFS_alternative_discovery_set_group(Timestamp* first_end, uint32_t group_size, Timestamp* firstFS,
+	Timestamp* startpoints, Timestamp* endpoints, FSMapGrouped* fsmg, uint32_t& points_to_write)
+{
+	Timestamp** group = (Timestamp**) malloc( group_size * sizeof(Timestamp*) );
+	for (uint32_t i = 0; i < group_size; i++)
+		group[i] = first_end + i;
+	std::sort( group, group + group_size, CompareByEndPointersT);
+	for (uint32_t i = 0; i < group_size; i++)
+		group[i] = startpoints + (group[i] - endpoints);
+
+	fsmg->result_list[ points_to_write ].pointers_group_start = group;
+	fsmg->result_list[ points_to_write ].start      = firstFS;
+	fsmg->result_list[ points_to_write ].end        = NULL;
+	fsmg->result_list[ points_to_write ].group_size = group_size;
+	points_to_write++;
+}
+
+void* bgudFS_alternative_discovery_set_thread(void* args)
+{
+	StructForParallelDiscoverySet* spds = (StructForParallelDiscoverySet*) args;
+
+	uint32_t points_to_write1 = *(spds->points_to_write1);
+	uint32_t points_to_write2 = *(spds->points_to_write2);
+	uint32_t group_size = 0;
+
+	while ((spds->r_start < spds->lastR) && (spds->s_start < spds->lastS))
+	{
+		if (*(spds->r_start) < *(spds->s_start))
+		{
+			while ((spds->r_start < spds->lastR) && (*(spds->r_start) < *(spds->s_start)) && (group_size <= spds->max_group_size))
+			{
+				group_size++;
+				(spds->r_start)++;
+				(spds->r_end)++;
+			}
+			bgudFS_alternative_discovery_set_group( spds->r_end - group_size, group_size, spds->s_start, spds->R_startpoints, spds->R_endpoints, spds->fsmg1, points_to_write1);
+			group_size = 0;
+		}
+		else
+		{
+			while ((spds->s_start < spds->lastS) && (*(spds->r_start) >= *(spds->s_start)) && (group_size <= spds->max_group_size))
+			{
+				group_size++;
+				(spds->s_start)++;
+				(spds->s_end)++;
+			}
+			bgudFS_alternative_discovery_set_group( spds->s_end - group_size, group_size, spds->r_start, spds->S_startpoints, spds->S_endpoints, spds->fsmg2, points_to_write2);
+			group_size = 0;
+		}
+	}
+
+	if ((spds->lastS != spds->total_lastS) && (spds->lastR != spds->total_lastR))
+	{
+		while (spds->r_start < spds->lastR)
+		{
+			while ((spds->r_start < spds->lastR) && (group_size <= spds->max_group_size))
+			{
+				group_size++;
+				(spds->r_start)++;
+				(spds->r_end)++;
+			}
+			bgudFS_alternative_discovery_set_group( spds->r_end - group_size, group_size, spds->s_start, spds->R_startpoints, spds->R_endpoints, spds->fsmg1, points_to_write1);
+			group_size = 0;
+		}
+		while (spds->s_start < spds->lastS)
+		{
+			while ((spds->s_start < spds->lastS) && (group_size <= spds->max_group_size))
+			{
+				group_size++;
+				(spds->s_start)++;
+				(spds->s_end)++;
+			}
+			bgudFS_alternative_discovery_set_group( spds->s_end - group_size, group_size, spds->r_start, spds->S_startpoints, spds->S_endpoints, spds->fsmg2, points_to_write2);
+			group_size = 0;
+		}
+	}
+
+	return NULL;
+}
+
+void bgudFS_alternative_discovery_set(Relation &R, Relation &S, int max_group_size, FSMapGrouped* fsmg_intermediate, Timestamp** boundariesR, Timestamp** boundariesS, uint32_t numThreads, uint32_t* points_to_write1, uint32_t* points_to_write2)
+{
+	StructForParallelDiscoverySet spds[numThreads];
+	pthread_t thread_id[numThreads];
+
+	for (uint32_t i = 0; i < numThreads; i++)
+	{
+		spds[i].r_start = boundariesR[i] + 1;
+		spds[i].s_start = boundariesS[i] + 1;
+		spds[i].r_end   = R.endpoints + (spds[i].r_start - R.startpoints);
+		spds[i].s_end   = S.endpoints + (spds[i].s_start - S.startpoints);
+		spds[i].lastR   = boundariesR[i+1] + 1;
+		spds[i].lastS   = boundariesS[i+1] + 1;
+		spds[i].total_lastR = boundariesR[numThreads] + 1;
+		spds[i].total_lastS = boundariesS[numThreads] + 1;
+		spds[i].max_group_size = max_group_size;
+		spds[i].R_startpoints = R.startpoints;
+		spds[i].S_startpoints = S.startpoints;
+		spds[i].R_endpoints   = R.endpoints;
+		spds[i].S_endpoints   = S.endpoints;
+		spds[i].fsmg1 = &fsmg_intermediate[0];
+		spds[i].fsmg2 = &fsmg_intermediate[1];
+
+		spds[i].thread_id = i;
+		spds[i].points_to_write1 = &points_to_write1[i];
+		spds[i].points_to_write2 = &points_to_write2[i];
+
+		pthread_create( &thread_id[i], NULL, bgudFS_alternative_discovery_set_thread, (void*) &spds[i]);
+	}
+	for (uint32_t i = 0; i < numThreads; i++)
+	{
+		pthread_join( thread_id[i], NULL);
+	}
+}
+
 ////////////////////
 // Internal loops //
 ////////////////////
@@ -626,7 +850,7 @@ Timestamp* firstFS, Timestamp* lastFS, BucketIndex& BI, Timestamp minStart, FSMa
 			fsmg_intermediate->result_list[ points_to_write ].
 				pointers_group_start[ fsmg_intermediate->result_list[ points_to_write ].group_size ] = *curr_start;
 			fsmg_intermediate->result_list[ points_to_write ].
-				end                 [ fsmg_intermediate->result_list[ points_to_write ].group_size ] = pivot;
+				end				 [ fsmg_intermediate->result_list[ points_to_write ].group_size ] = pivot;
 			fsmg_intermediate->result_list[ points_to_write ].group_size++;
 		}
 	}
@@ -819,12 +1043,12 @@ void bgudFS_intermediate_discovery_split_set(FSMapGrouped* fsmg_intermediate, FS
 
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].pointers_group_start = (Timestamp**) malloc(fsmg_intermediate[0].result_list[i].group_size * sizeof(Timestamp*) );
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].start = S_copies[ numa_map[smallest_index] ].startpoints + (fsmg_intermediate[0].result_list[i].start - S.startpoints);
-			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end                  = (Timestamp**) malloc(fsmg_intermediate[0].result_list[i].group_size * sizeof(Timestamp*) );
+			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end				  = (Timestamp**) malloc(fsmg_intermediate[0].result_list[i].group_size * sizeof(Timestamp*) );
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].group_size = fsmg_intermediate[0].result_list[i].group_size;
 			for (uint32_t j = 0; j < fsmg_intermediate[0].result_list[i].group_size; j++)
 			{
 				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].pointers_group_start[ j ] =  R_copies[ numa_map[smallest_index] ].startpoints + (fsmg_intermediate[0].result_list[i].pointers_group_start[j] - R.startpoints);
-				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end                 [ j ] =  S_copies[ numa_map[smallest_index] ].startpoints + (fsmg_intermediate[0].result_list[i].end[j] - S.startpoints);
+				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end				 [ j ] =  S_copies[ numa_map[smallest_index] ].startpoints + (fsmg_intermediate[0].result_list[i].end[j] - S.startpoints);
 			}
 			fsmg[smallest_index].load += current_load;
 			fsmg[smallest_index].numResults++;
@@ -842,12 +1066,12 @@ void bgudFS_intermediate_discovery_split_set(FSMapGrouped* fsmg_intermediate, FS
 
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].pointers_group_start = (Timestamp**) malloc(fsmg_intermediate[1].result_list[i].group_size * sizeof(Timestamp*) );
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].start  = R_copies[ numa_map[smallest_index] ].startpoints + (fsmg_intermediate[1].result_list[i].start - R.startpoints);
-			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end                  = (Timestamp**) malloc(fsmg_intermediate[1].result_list[i].group_size * sizeof(Timestamp*) );
+			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end				  = (Timestamp**) malloc(fsmg_intermediate[1].result_list[i].group_size * sizeof(Timestamp*) );
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].group_size = fsmg_intermediate[1].result_list[i].group_size;
 			for (uint32_t j = 0; j < fsmg_intermediate[1].result_list[i].group_size; j++)
 			{
 				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].pointers_group_start[ j ] = S_copies[ numa_map[smallest_index] ].startpoints + (fsmg_intermediate[1].result_list[i].pointers_group_start[j] - S.startpoints);
-				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end                 [ j ] = R_copies[ numa_map[smallest_index] ].startpoints + (fsmg_intermediate[1].result_list[i].end[j] - R.startpoints);
+				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end				 [ j ] = R_copies[ numa_map[smallest_index] ].startpoints + (fsmg_intermediate[1].result_list[i].end[j] - R.startpoints);
 			}
 			fsmg[smallest_index].load += current_load;
 			fsmg[smallest_index].numResults++;
@@ -867,12 +1091,12 @@ void bgudFS_intermediate_discovery_split_set(FSMapGrouped* fsmg_intermediate, FS
 
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].pointers_group_start = (Timestamp**) malloc(fsmg_intermediate[0].result_list[i].group_size * sizeof(Timestamp*) );
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].start = fsmg_intermediate[0].result_list[i].start;
-			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end                  = (Timestamp**) malloc(fsmg_intermediate[0].result_list[i].group_size * sizeof(Timestamp*) );
+			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end				  = (Timestamp**) malloc(fsmg_intermediate[0].result_list[i].group_size * sizeof(Timestamp*) );
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].group_size = fsmg_intermediate[0].result_list[i].group_size;
 			for (uint32_t j = 0; j < fsmg_intermediate[0].result_list[i].group_size; j++)
 			{
 				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].pointers_group_start[ j ] = fsmg_intermediate[0].result_list[i].pointers_group_start[j];
-				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end                 [ j ] = fsmg_intermediate[0].result_list[i].end[j];
+				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end				 [ j ] = fsmg_intermediate[0].result_list[i].end[j];
 			}
 			fsmg[smallest_index].load += current_load;
 			fsmg[smallest_index].numResults++;
@@ -890,12 +1114,12 @@ void bgudFS_intermediate_discovery_split_set(FSMapGrouped* fsmg_intermediate, FS
 
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].pointers_group_start = (Timestamp**) malloc(fsmg_intermediate[1].result_list[i].group_size * sizeof(Timestamp*) );
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].start = fsmg_intermediate[1].result_list[i].start;
-			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end                  = (Timestamp**) malloc(fsmg_intermediate[1].result_list[i].group_size * sizeof(Timestamp*) );
+			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end				  = (Timestamp**) malloc(fsmg_intermediate[1].result_list[i].group_size * sizeof(Timestamp*) );
 			fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].group_size = fsmg_intermediate[1].result_list[i].group_size;
 			for (uint32_t j = 0; j < fsmg_intermediate[1].result_list[i].group_size; j++)
 			{
 				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].pointers_group_start[ j ] = fsmg_intermediate[1].result_list[i].pointers_group_start[j];
-				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end                 [ j ] = fsmg_intermediate[1].result_list[i].end[j];
+				fsmg[smallest_index].result_list[ fsmg[smallest_index].numResults ].end				 [ j ] = fsmg_intermediate[1].result_list[i].end[j];
 			}
 			fsmg[smallest_index].load += current_load;
 			fsmg[smallest_index].numResults++;

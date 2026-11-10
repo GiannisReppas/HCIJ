@@ -29,6 +29,8 @@
 #define CLOSEST     11
 #define OPPOSITE    12
 
+#define OG_CREATION
+
 typedef uint64_t Timestamp;
 
 class Timer

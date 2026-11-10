@@ -68,7 +68,10 @@ public:
 	uint64_t compute_results_wc(uint32_t j);
 	uint64_t compute_results_xor(uint32_t j);
 	uint64_t compute_results_simd_xor(uint32_t j);
+
 	uint64_t compute_results_rectangle_simd_xor(uint32_t j, uint32_t X);
+	uint64_t compute_results_alternative_simd_xor(uint32_t j, Timestamp* outer_startpoints, Timestamp* outer_endpoints, Timestamp* lastFS);
+
 	~FSMapGrouped();
 };
 
